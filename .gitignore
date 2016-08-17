@@ -1,4 +1,5 @@
-*/AppDeployToolkit/*
-*/Deploy-Application.exe
-*/Deploy-Application.exe.config
-*/Files/*
+AppDeployToolkit/*
+Deploy-Application.exe
+Deploy-Application.exe.config
+Files/*
+SupportFiles/*

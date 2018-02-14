@@ -17,20 +17,20 @@
 .PARAMETER DisableLogging
 	Disables logging to file for the script. Default is: $false.
 .EXAMPLE
-	Deploy-Application.ps1
+    powershell.exe -Command "& { & '.\Deploy-Application.ps1' -DeployMode 'Silent'; Exit $LastExitCode }"
 .EXAMPLE
-	Deploy-Application.ps1 -DeployMode 'Silent'
+    powershell.exe -Command "& { & '.\Deploy-Application.ps1' -AllowRebootPassThru; Exit $LastExitCode }"
 .EXAMPLE
-	Deploy-Application.ps1 -AllowRebootPassThru -AllowDefer
+    powershell.exe -Command "& { & '.\Deploy-Application.ps1' -DeploymentType 'Uninstall'; Exit $LastExitCode }"
 .EXAMPLE
-	Deploy-Application.ps1 -DeploymentType Uninstall
+    Deploy-Application.exe -DeploymentType "Install" -DeployMode "Silent"
 .NOTES
 	Toolkit Exit Code Ranges:
 	60000 - 68999: Reserved for built-in exit codes in Deploy-Application.ps1, Deploy-Application.exe, and AppDeployToolkitMain.ps1
 	69000 - 69999: Recommended for user customized exit codes in Deploy-Application.ps1
 	70000 - 79999: Recommended for user customized exit codes in AppDeployToolkitExtensions.ps1
 .LINK 
-	http://psappdeploytoolkit.codeplex.com
+	http://psappdeploytoolkit.com
 #>
 [CmdletBinding()]
 Param (
@@ -58,14 +58,17 @@ Try {
 	## Variables: Application
 	[string]$appVendor = 'Mozilla'
 	[string]$appName = 'Firefox'
-	[string]$appVersion = '50.1.0'
+	[string]$appVersion = '58.0'
 	[string]$appArch = 'x86'
 	[string]$appLang = 'EN'
 	[string]$appRevision = '01'
 	[string]$appScriptVersion = '1.0.0'
-	[string]$appScriptDate = '20161228'
+	[string]$appScriptDate = '20170124'
 	[string]$appScriptAuthor = 'Dan Lezoche'
 	##*===============================================
+	## Variables: Install Titles (Only set here to override defaults set by the toolkit)
+	[string]$installName = ''
+	[string]$installTitle = ''
 	
 	##* Do not modify section below
 	#region DoNotModify
@@ -75,23 +78,25 @@ Try {
 	
 	## Variables: Script
 	[string]$deployAppScriptFriendlyName = 'Deploy Application'
-	[version]$deployAppScriptVersion = [version]'3.6.1'
-	[string]$deployAppScriptDate = '03/26/2015'
+	[version]$deployAppScriptVersion = [version]'3.6.9'
+	[string]$deployAppScriptDate = '02/12/2017'
 	[hashtable]$deployAppScriptParameters = $psBoundParameters
 	
 	## Variables: Environment
-	[string]$scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
+	If (Test-Path -LiteralPath 'variable:HostInvocation') { $InvocationInfo = $HostInvocation } Else { $InvocationInfo = $MyInvocation }
+	[string]$scriptDirectory = Split-Path -Path $InvocationInfo.MyCommand.Definition -Parent
 	
 	## Dot source the required App Deploy Toolkit Functions
 	Try {
 		[string]$moduleAppDeployToolkitMain = "$scriptDirectory\AppDeployToolkit\AppDeployToolkitMain.ps1"
-		If (-not (Test-Path -Path $moduleAppDeployToolkitMain -PathType Leaf)) { Throw "Module does not exist at the specified location [$moduleAppDeployToolkitMain]." }
+		If (-not (Test-Path -LiteralPath $moduleAppDeployToolkitMain -PathType 'Leaf')) { Throw "Module does not exist at the specified location [$moduleAppDeployToolkitMain]." }
 		If ($DisableLogging) { . $moduleAppDeployToolkitMain -DisableLogging } Else { . $moduleAppDeployToolkitMain }
 	}
 	Catch {
-		[int32]$mainExitCode = 60008
+		If ($mainExitCode -eq 0){ [int32]$mainExitCode = 60008 }
 		Write-Error -Message "Module [$moduleAppDeployToolkitMain] failed to load: `n$($_.Exception.Message)`n `n$($_.InvocationInfo.PositionMessage)" -ErrorAction 'Continue'
-		Exit $mainExitCode
+		## Exit the script, returning the exit code to SCCM
+		If (Test-Path -LiteralPath 'variable:HostInvocation') { $script:ExitCode = $mainExitCode; Exit } Else { Exit $mainExitCode }
 	}
 	
 	#endregion
@@ -107,13 +112,25 @@ Try {
 		[string]$installPhase = 'Pre-Installation'
 		
 		## Show Welcome Message, close Internet Explorer if required, allow up to 3 deferrals, verify there is enough disk space to complete the install, and persist the prompt
-		Show-InstallationWelcome -CloseApps firefox -AllowDefer -DeferTimes 3 -CheckDiskSpace -PersistPrompt
+		Show-InstallationWelcome -CloseApps 'firefox' -AllowDefer -DeferTimes 3 -CheckDiskSpace -PersistPrompt
 		
 		## Show Progress Message (with the default message)
 		Show-InstallationProgress
 		
 		## <Perform Pre-Installation tasks here>
-		#Stop-Process -Name "iexplore,firefox,chrome" -Force
+		#Cleanup old Firefox CCK2 Configurations
+        If ($is64Bit)
+        {
+            Write-Log -Message "Removing legacy CCK2 Profile on 64-bit architecture"
+            Remove-File -Path "${env:ProgramFiles(x86)}\Mozilla Firefox\cck2.cfg"
+            Remove-Folder -Path "${env:ProgramFiles(x86)}\Mozilla Firefox\cck2"
+        }
+        Else
+        {
+            Write-Log -Message "Removing legacy CCK2 Profile on 32-bit architecture"
+            Remove-File -Path "${env:ProgramFiles}\Mozilla Firefox\cck2.cfg"
+            Remove-Folder -Path "${env:ProgramFiles}\Mozilla Firefox\cck2"
+        }     
 		
 		##*===============================================
 		##* INSTALLATION 
@@ -121,43 +138,36 @@ Try {
 		[string]$installPhase = 'Installation'
 		
 		## Handle Zero-Config MSI Installations
-		If ($useDefaultMsi) { Execute-MSI -Action 'Install' -Path $defaultMsiFile }
+		If ($useDefaultMsi) {
+			[hashtable]$ExecuteDefaultMSISplat =  @{ Action = 'Install'; Path = $defaultMsiFile }; If ($defaultMstFile) { $ExecuteDefaultMSISplat.Add('Transform', $defaultMstFile) }
+			Execute-MSI @ExecuteDefaultMSISplat; If ($defaultMspFiles) { $defaultMspFiles | ForEach-Object { Execute-MSI -Action 'Patch' -Path $_ } }
+		}
 		
 		## <Perform Installation tasks here>
-		Execute-Process -Path 'Firefox Setup 50.1.0.exe' -Parameters "-ms /INI='$dirFiles\install.ini'"
-        #Execute-MSI -Action 'Install' -Path 'Media-Player_Windows_006_001_001.msi' -PassThru		
-
+		Execute-Process -Path 'Firefox Setup 58.0.exe' -Parameters "-ms /INI='$dirFiles\install.ini'"
+		
 		##*===============================================
 		##* POST-INSTALLATION
 		##*===============================================
 		[string]$installPhase = 'Post-Installation'
 		
 		## <Perform Post-Installation tasks here>
-        #If (Test-Path -Path "C:\Users\Public\Desktop\VLC media player.lnk") { Remove-File -Path "C:\Users\Public\Desktop\VLC media player.lnk" }
         If ($is64Bit)
         {
-            Write-Log -Message "Importing CCK2 Profile on 64-bit architecture"
-            Copy-File -Path "$dirSupportFiles\firefox\browser" -Destination "${env:ProgramFiles(x86)}\Mozilla Firefox" -Recurse
-            Copy-File -Path "$dirSupportFiles\firefox\cck2" -Destination "${env:ProgramFiles(x86)}\Mozilla Firefox" -Recurse
-            Copy-File -Path "$dirSupportFiles\firefox\defaults" -Destination "${env:ProgramFiles(x86)}\Mozilla Firefox" -Recurse
-            Copy-File -Path "$dirSupportFiles\firefox\cck2.cfg" -Destination "${env:ProgramFiles(x86)}\Mozilla Firefox"
+            Write-Log -Message "Importing custom FF profile on 64-bit architecture"
+            Copy-File -Path "$dirSupportFiles\autoconfig.js" -Destination "${env:ProgramFiles(x86)}\Mozilla Firefox\defaults\pref"
+            Copy-File -Path "$dirSupportFiles\bucksiu.cfg" -Destination "${env:ProgramFiles(x86)}\Mozilla Firefox"
         }
         Else
         {
-            Write-Log -Message "Importing CCK2 Profile on 32-bit architecture"
-            Copy-File -Path "$dirSupportFiles\firefox\browser" -Destination "$env:ProgramFiles\Mozilla Firefox" -Recurse
-            Copy-File -Path "$dirSupportFiles\firefox\cck2" -Destination "$env:ProgramFiles\Mozilla Firefox" -Recurse
-            Copy-File -Path "$dirSupportFiles\firefox\defaults" -Destination "$env:ProgramFiles\Mozilla Firefox" -Recurse
-            Copy-File -Path "$dirSupportFiles\firefox\cck2.cfg" -Destination "$env:ProgramFiles\Mozilla Firefox"
-        }            
-        If (Test-Path -Path "$ENV:PUBLIC\Desktop\Mozilla Firefox.lnk")
-        {
-            Write-Log -Message "Removing desktop link"
-            Remove-File -Path "$ENV:PUBLIC\Desktop\Mozilla Firefox.lnk"
+            Write-Log -Message "Importing custom FF profile on 32-bit architecture"
+            Copy-File -Path "$dirSupportFiles\autoconfig.js" -Destination "$env:ProgramFiles\Mozilla Firefox\defaults\pref"
+            Copy-File -Path "$dirSupportFiles\bucksiu.cfg" -Destination "$env:ProgramFiles\Mozilla Firefox"
         }
 
+
 		## Display a message at the end of the install
-		If (-not $useDefaultMsi) { Show-InstallationPrompt -Message "$AppName - $AppVersion installation complete." -ButtonRightText 'OK' -Icon Information -NoWait }
+		If (-not $useDefaultMsi) { Show-InstallationPrompt -Message 'You can customize text to appear at the end of an install or remove it completely for unattended installations.' -ButtonRightText 'OK' -Icon Information -NoWait }
 	}
 	ElseIf ($deploymentType -ieq 'Uninstall')
 	{
@@ -173,7 +183,7 @@ Try {
 		Show-InstallationProgress
 		
 		## <Perform Pre-Uninstallation tasks here>
-		#Stop-Process -Name vlc -Force
+		
 		
 		##*===============================================
 		##* UNINSTALLATION
@@ -181,19 +191,13 @@ Try {
 		[string]$installPhase = 'Uninstallation'
 		
 		## Handle Zero-Config MSI Uninstallations
-		If ($useDefaultMsi) { Execute-MSI -Action 'Uninstall' -Path $defaultMsiFile }
+		If ($useDefaultMsi) {
+			[hashtable]$ExecuteDefaultMSISplat =  @{ Action = 'Uninstall'; Path = $defaultMsiFile }; If ($defaultMstFile) { $ExecuteDefaultMSISplat.Add('Transform', $defaultMstFile) }
+			Execute-MSI @ExecuteDefaultMSISplat
+		}
 		
 		# <Perform Uninstallation tasks here>
-        Execute-Process -Path 'Firefox Setup 50.1.0.exe' -Parameters "/S"
-        #Execute-MSI -Action 'Uninstall' -Path 'Media-Player_Windows_006_001_001.msi' -PassThru
-		#If (Test-Path -Path "C:\Program Files (x86)\VideoLAN\VLC\uninstall.exe")
-        #{
-        #    Execute-Process -Path "C:\Program Files (x86)\VideoLAN\VLC\uninstall.exe" -Parameters '/S'
-        #}
-        #ElseIf (Test-Path -Path "C:\Program Files\VideoLAN\VLC\uninstall.exe")
-        #{
-        #    Execute-Process -Path "C:\Program Files\VideoLAN\VLC\uninstall.exe" -Parameters '/S'
-        #}
+		Execute-Process -Path 'Firefox Setup 58.0.exe' -Parameters "/S"
 		
 		##*===============================================
 		##* POST-UNINSTALLATION

@@ -1,0 +1,8 @@
+Detection
+
+File Path: %ProgramFiles(x86)%\Mozilla Firefox
+File: firefox.exe
+[x] This file or folder is associated with a 32-bit application on 64-bit systems
+Property: Version
+Operator: Greater than or equal to
+Value: 58.0.0.6592

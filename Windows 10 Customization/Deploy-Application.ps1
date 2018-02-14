@@ -17,20 +17,20 @@
 .PARAMETER DisableLogging
 	Disables logging to file for the script. Default is: $false.
 .EXAMPLE
-	Deploy-Application.ps1
+    powershell.exe -Command "& { & '.\Deploy-Application.ps1' -DeployMode 'Silent'; Exit $LastExitCode }"
 .EXAMPLE
-	Deploy-Application.ps1 -DeployMode 'Silent'
+    powershell.exe -Command "& { & '.\Deploy-Application.ps1' -AllowRebootPassThru; Exit $LastExitCode }"
 .EXAMPLE
-	Deploy-Application.ps1 -AllowRebootPassThru -AllowDefer
+    powershell.exe -Command "& { & '.\Deploy-Application.ps1' -DeploymentType 'Uninstall'; Exit $LastExitCode }"
 .EXAMPLE
-	Deploy-Application.ps1 -DeploymentType Uninstall
+    Deploy-Application.exe -DeploymentType "Install" -DeployMode "Silent"
 .NOTES
 	Toolkit Exit Code Ranges:
 	60000 - 68999: Reserved for built-in exit codes in Deploy-Application.ps1, Deploy-Application.exe, and AppDeployToolkitMain.ps1
 	69000 - 69999: Recommended for user customized exit codes in Deploy-Application.ps1
 	70000 - 79999: Recommended for user customized exit codes in AppDeployToolkitExtensions.ps1
 .LINK 
-	http://psappdeploytoolkit.codeplex.com
+	http://psappdeploytoolkit.com
 #>
 [CmdletBinding()]
 Param (
@@ -61,11 +61,14 @@ Try {
 	[string]$appVersion = '1.0'
 	[string]$appArch = 'x86/x64'
 	[string]$appLang = 'EN'
-	[string]$appRevision = '01'
-	[string]$appScriptVersion = '1.0.0'
+	[string]$appRevision = '02'
+	[string]$appScriptVersion = '1.0.1'
 	[string]$appScriptDate = '20151019'
 	[string]$appScriptAuthor = 'Dan Lezoche'
 	##*===============================================
+	## Variables: Install Titles (Only set here to override defaults set by the toolkit)
+	[string]$installName = ''
+	[string]$installTitle = ''
 	
 	##* Do not modify section below
 	#region DoNotModify
@@ -75,23 +78,25 @@ Try {
 	
 	## Variables: Script
 	[string]$deployAppScriptFriendlyName = 'Deploy Application'
-	[version]$deployAppScriptVersion = [version]'3.6.1'
-	[string]$deployAppScriptDate = '03/26/2015'
+	[version]$deployAppScriptVersion = [version]'3.6.9'
+	[string]$deployAppScriptDate = '02/12/2017'
 	[hashtable]$deployAppScriptParameters = $psBoundParameters
 	
 	## Variables: Environment
-	[string]$scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
+	If (Test-Path -LiteralPath 'variable:HostInvocation') { $InvocationInfo = $HostInvocation } Else { $InvocationInfo = $MyInvocation }
+	[string]$scriptDirectory = Split-Path -Path $InvocationInfo.MyCommand.Definition -Parent
 	
 	## Dot source the required App Deploy Toolkit Functions
 	Try {
 		[string]$moduleAppDeployToolkitMain = "$scriptDirectory\AppDeployToolkit\AppDeployToolkitMain.ps1"
-		If (-not (Test-Path -Path $moduleAppDeployToolkitMain -PathType Leaf)) { Throw "Module does not exist at the specified location [$moduleAppDeployToolkitMain]." }
+		If (-not (Test-Path -LiteralPath $moduleAppDeployToolkitMain -PathType 'Leaf')) { Throw "Module does not exist at the specified location [$moduleAppDeployToolkitMain]." }
 		If ($DisableLogging) { . $moduleAppDeployToolkitMain -DisableLogging } Else { . $moduleAppDeployToolkitMain }
 	}
 	Catch {
-		[int32]$mainExitCode = 60008
+		If ($mainExitCode -eq 0){ [int32]$mainExitCode = 60008 }
 		Write-Error -Message "Module [$moduleAppDeployToolkitMain] failed to load: `n$($_.Exception.Message)`n `n$($_.InvocationInfo.PositionMessage)" -ErrorAction 'Continue'
-		Exit $mainExitCode
+		## Exit the script, returning the exit code to SCCM
+		If (Test-Path -LiteralPath 'variable:HostInvocation') { $script:ExitCode = $mainExitCode; Exit } Else { Exit $mainExitCode }
 	}
 	
 	#endregion
@@ -107,13 +112,13 @@ Try {
 		[string]$installPhase = 'Pre-Installation'
 		
 		## Show Welcome Message, close Internet Explorer if required, allow up to 3 deferrals, verify there is enough disk space to complete the install, and persist the prompt
-		#Show-InstallationWelcome -CloseApps "iexplore,firefox,chrome" -AllowDefer -DeferTimes 3 -CheckDiskSpace -PersistPrompt
+		Show-InstallationWelcome -CloseApps 'iexplore' -AllowDefer -DeferTimes 3 -CheckDiskSpace -PersistPrompt
 		
 		## Show Progress Message (with the default message)
 		Show-InstallationProgress
 		
 		## <Perform Pre-Installation tasks here>
-		#Stop-Process -Name "iexplore,firefox,chrome" -Force
+		
 		
 		##*===============================================
 		##* INSTALLATION 
@@ -121,11 +126,13 @@ Try {
 		[string]$installPhase = 'Installation'
 		
 		## Handle Zero-Config MSI Installations
-		If ($useDefaultMsi) { Execute-MSI -Action 'Install' -Path $defaultMsiFile }
+		If ($useDefaultMsi) {
+			[hashtable]$ExecuteDefaultMSISplat =  @{ Action = 'Install'; Path = $defaultMsiFile }; If ($defaultMstFile) { $ExecuteDefaultMSISplat.Add('Transform', $defaultMstFile) }
+			Execute-MSI @ExecuteDefaultMSISplat; If ($defaultMspFiles) { $defaultMspFiles | ForEach-Object { Execute-MSI -Action 'Patch' -Path $_ } }
+		}
 		
 		## <Perform Installation tasks here>
-        
-        Write-Log -Message "Setting up Environment"
+		Write-Log -Message "Setting up Environment"
         #Enable RDP 
         Set-RegistryKey -Key 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0 -Type DWord
         #Configure RDP Auth (No NLA)
@@ -218,17 +225,16 @@ Try {
             Remove-RegistryKey -SID $UserProfile.SID -Key "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name OneDriveSetup
 		}
 		Invoke-HKCURegistrySettingsForAllUsers -RegistrySettings $HKCURegistrySettings
-
+		
 		##*===============================================
 		##* POST-INSTALLATION
-		##*=====================dl==========================
+		##*===============================================
 		[string]$installPhase = 'Post-Installation'
 		
 		## <Perform Post-Installation tasks here>
-        #If (Test-Path -Path "C:\Users\Public\Desktop\VLC media player.lnk") { Remove-File -Path "C:\Users\Public\Desktop\VLC media player.lnk" }
 		
 		## Display a message at the end of the install
-		If (-not $useDefaultMsi) { Show-InstallationPrompt -Message "$AppName - $AppVersion installation complete." -ButtonRightText 'OK' -Icon Information -NoWait }
+		#If (-not $useDefaultMsi) { Show-InstallationPrompt -Message 'You can customize text to appear at the end of an install or remove it completely for unattended installations.' -ButtonRightText 'OK' -Icon Information -NoWait }
 	}
 	ElseIf ($deploymentType -ieq 'Uninstall')
 	{
@@ -238,13 +244,13 @@ Try {
 		[string]$installPhase = 'Pre-Uninstallation'
 		
 		## Show Welcome Message, close Internet Explorer with a 60 second countdown before automatically closing
-		Show-InstallationWelcome -CloseApps 'vlc' -CloseAppsCountdown 60
+		#Show-InstallationWelcome -CloseApps 'iexplore' -CloseAppsCountdown 60
 		
 		## Show Progress Message (with the default message)
 		Show-InstallationProgress
 		
 		## <Perform Pre-Uninstallation tasks here>
-		#Stop-Process -Name vlc -Force
+		
 		
 		##*===============================================
 		##* UNINSTALLATION
@@ -252,18 +258,13 @@ Try {
 		[string]$installPhase = 'Uninstallation'
 		
 		## Handle Zero-Config MSI Uninstallations
-		If ($useDefaultMsi) { Execute-MSI -Action 'Uninstall' -Path $defaultMsiFile }
+		If ($useDefaultMsi) {
+			[hashtable]$ExecuteDefaultMSISplat =  @{ Action = 'Uninstall'; Path = $defaultMsiFile }; If ($defaultMstFile) { $ExecuteDefaultMSISplat.Add('Transform', $defaultMstFile) }
+			Execute-MSI @ExecuteDefaultMSISplat
+		}
 		
 		# <Perform Uninstallation tasks here>
-        #Execute-MSI -Action 'Uninstall' -Path 'Media-Player_Windows_006_001_001.msi' -PassThru
-		#If (Test-Path -Path "C:\Program Files (x86)\VideoLAN\VLC\uninstall.exe")
-        #{
-        #    Execute-Process -Path "C:\Program Files (x86)\VideoLAN\VLC\uninstall.exe" -Parameters '/S'
-        #}
-        #ElseIf (Test-Path -Path "C:\Program Files\VideoLAN\VLC\uninstall.exe")
-        #{
-        #    Execute-Process -Path "C:\Program Files\VideoLAN\VLC\uninstall.exe" -Parameters '/S'
-        #}
+		
 		
 		##*===============================================
 		##* POST-UNINSTALLATION

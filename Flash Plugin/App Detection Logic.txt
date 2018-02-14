@@ -1,0 +1,7 @@
+Detection
+
+Setting Type: Windows Installer
+Product Code: {9EA59C80-8DB7-4D85-9201-FED4CF6B81F5}
+MSI Property: Version
+Operator: Greater than or equal to
+Value: 27.0.0.183

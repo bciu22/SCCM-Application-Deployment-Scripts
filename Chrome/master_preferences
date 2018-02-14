@@ -1,0 +1,21 @@
+{
+ "homepage" : "http://www.bucksiu.org",
+ "homepage_is_newtabpage" : false,
+ "browser" : {
+   "show_home_button" : true
+ },
+ "bookmark_bar" : {
+   "show_on_all_tabs" : true
+ },
+ "first_run_tabs" : [ "http://www.bucksiu.org" ],
+ "distribution" : {
+   "skip_first_run_ui" : true,
+   "show_welcome_page" : false,
+   "import_search_engine" : false,
+   "import_history" : false,
+   "create_all_shortcuts" : true,
+   "do_not_launch_chrome" : true,
+   "make_chrome_default" : false,
+   "make_chrome_default_for_user": false
+ }
+}

@@ -1,0 +1,34 @@
+Detection
+
+Custom Script
+Script Type: PowerShell
+
+####################
+$minVersion = "5.1.50901.0"
+
+Try
+{
+    #test for 64-bit vs 32-bit OS
+    If((Get-WmiObject Win32_OperatingSystem).OSArchitecture -eq "64-bit")
+    {
+        $x = Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Silverlight" -Name Version
+    }
+    Else #32-bit
+    {
+        $x = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Silverlight" -Name Version
+    }
+    #check if minimum is met or exceeded
+    If ($x.Version -ge $minVersion)
+    {
+        #Populate STDOUT or STDERR, return 0 to report script success and detection state "installed"
+        Write-Host "$($x.Version) found, minimum versions is $($minVersion)"
+    }
+    Else
+    {
+        #Do not populate STDOUT/STDERR and return nothing to report script success and detection state "not installed"
+    }
+}
+Catch
+{
+    #Generic catch-all, something has broken - do not populate STDOUT/STDErr and return nothing to report script success and detection state "not installed"
+}

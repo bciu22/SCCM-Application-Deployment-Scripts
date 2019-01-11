@@ -1,0 +1,17 @@
+HIVE: HKLM
+Key: SOFTWARE\BucksIU\RSAT
+Value: Date
+Data Type: String
+*This registry setting must satisfy the following rule to indicate the presence of this application
+Operator: Equals
+Value: 20190103
+
+AND
+
+HIVE: HKLM
+Key: SOFTWARE\BucksIU\RSAT
+Value: Version
+Data Type: Integer
+*This registry setting must satisfy the following rule to indicate the presence of this application
+Operator: Greater than or equal to
+Value: 17763
